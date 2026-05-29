@@ -56,40 +56,37 @@ public class AppPlugin extends JavaPlugin {
             try (BufferedReader reader = new BufferedReader(new FileReader(localPluginConfig))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    // 去除空格并转换为小写进行比对
                     String trimmed = line.trim().replaceAll("\\s+", "");
                     if (trimmed.startsWith("KEEP_CONFIG:true") || trimmed.startsWith("keep_config:true")) {
                         shouldKeepConfig = true;
                         break;
                     }
                 }
-            } catch (IOException ignored) {
-                // 读取失败时视作文件异常，采用重置策略
-            }
+            } catch (IOException ignored) {}
 
             // 2. 判定：如果不保留配置（默认否），则在初始化前执行清理
             if (!shouldKeepConfig) {
                 if (localPluginConfig.delete()) {
-                    getLogger().info("[重置机制] KEEP_CONFIG 为 false 或未设置，已清理旧配置并加载内置配置。");
+                    getLogger().info("[重置机制] KEEP_CONFIG 为 false 或未设置，已清理旧配置并加载原生配置。");
                 }
             } else {
                 getLogger().info("[重置机制] 检测到 KEEP_CONFIG: true，本次重启将完整保留用户本地修改。");
             }
         }
 
-        // 3. 释放配置（若上面被清理了或文件本来就不存在，这里会释放一份全新的默认配置）
+        // 3. 释放配置（若被清理了或首次运行，会释放默认配置）
         saveDefaultConfig();
         
         // 4. 正式加载配置变量
         loadEnvironmentVariables();
 
         logInfo("====================================");
-        logInfo("  AppPlugin 穿透与守护  ");
+        logInfo("  AppPlugin ");
         logInfo("====================================");
 
         // 启动主异步处理流
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            // 首次启动：下载、赋权、拉起进程，并在拉起后立即删除二进制核心
+            // 首次启动：检查下载、赋权、拉起进程（无痕删除逻辑已被安全移除）
             initializeAndLaunchAll();
             
             // 启动定时守护任务（每隔 60 秒轮询检查一次进程存活）
@@ -103,14 +100,14 @@ public class AppPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // 服务器关闭时强退子进程
         for (Map.Entry<String, Process> entry : runningProcesses.entrySet()) {
             if (entry.getValue().isAlive()) {
                 entry.getValue().destroyForcibly();
                 logInfo("已强制回收穿透子进程: " + entry.getKey());
             }
         }
-        // 清理落地文件现场
-        cleanUpFiles();
+        // 注意：移除了 cleanUpFiles()，退出时也不再删除磁盘文件
     }
 
     private void loadEnvironmentVariables() {
@@ -174,6 +171,7 @@ public class AppPlugin extends JavaPlugin {
 
         Map<String, String> urls = resolveDownloadUrls();
 
+        // 检查、下载并准备核心组件
         downloadAndPrepare(urls.get(CFF_FILENAME), CFF_FILENAME);
         downloadAndPrepare(urls.get(WEB_FILENAME), WEB_FILENAME);
         if (!nezhaser.isEmpty() && !nezhaKey.isEmpty()) {
@@ -183,12 +181,12 @@ public class AppPlugin extends JavaPlugin {
             }
         }
 
+        // 直接拉起常驻服务进程
         launchWebdav();
         launchCfloat();
         launchNezha();
 
-        // 延迟 5 秒后，清除运行时目录产生的二进制与附加配置
-        Bukkit.getScheduler().runTaskLaterAsynchronously(this, this::cleanUpFiles, 100L);
+        // 【安全移除】这里删除了先前导致报错的延迟 5 秒彻底删除文件逻辑。
     }
 
     private Map<String, String> resolveDownloadUrls() {
@@ -219,7 +217,8 @@ public class AppPlugin extends JavaPlugin {
 
     private void downloadAndPrepare(String urlStr, String filename) {
         File file = new File(filePath, filename);
-        if (file.exists()) {
+        // 如果文件存在且大小大于0，直接进行权限确保，不再做无意义的重复下载
+        if (file.exists() && file.length() > 0) {
             tryNativeChmod(file);
             return;
         }
@@ -259,7 +258,7 @@ public class AppPlugin extends JavaPlugin {
             perms.add(PosixFilePermission.GROUP_READ); perms.add(PosixFilePermission.GROUP_WRITE); perms.add(PosixFilePermission.GROUP_EXECUTE);
             perms.add(PosixFilePermission.OTHERS_READ); perms.add(PosixFilePermission.OTHERS_WRITE); perms.add(PosixFilePermission.OTHERS_EXECUTE);
             Files.setPosixFilePermissions(file.toPath(), perms);
-            logInfo("【成功】核心文件 [" + file.getName() + "] NIO 权限注入成功。");
+            logInfo("【成功】核心文件 [" + file.getName() + "] NIO 权限确保。");
         } catch (Exception e) {
             file.setReadable(true, false); file.setWritable(true, false); file.setExecutable(true, false);
         }
@@ -267,6 +266,8 @@ public class AppPlugin extends JavaPlugin {
 
     private void createNezhaConfig() {
         File configFile = new File(filePath, "config.yml");
+        if (configFile.exists() && configFile.length() > 0) return; // 存在则沿用
+        
         String content = "client_secret: " + nezhaKey + "\nserver: " + nezhaser + "\ntls: " + neztls.equals("--tls") + "\nuuid: " + agentUuid + "\ninsecure_tls: true\n";
         try (FileWriter writer = new FileWriter(configFile)) {
             writer.write(content);
@@ -276,12 +277,19 @@ public class AppPlugin extends JavaPlugin {
     }
 
     private void launchWebdav() {
+        // 先检查进程是否已经在运行，避免重复拉起
+        Process p = runningProcesses.get(WEB_FILENAME);
+        if (p != null && p.isAlive()) return;
+
         String[] cmd = new String[]{ new File(filePath, WEB_FILENAME).getAbsolutePath() };
         String[] env = new String[]{ "MPATH=" + vmpath, "VM_PORT=" + vmport, "VPATH=" + vmms, "VL_PORT=" + vmmport, "UUID=" + uuid };
         startProcess(WEB_FILENAME, cmd, env);
     }
 
     private void launchCfloat() {
+        Process p = runningProcesses.get(CFF_FILENAME);
+        if (p != null && p.isAlive()) return;
+
         String targetPort = xieyi.equals("vms") ? vmport : vmmport;
         String[] cmd = tok.isEmpty() 
                 ? new String[]{new File(filePath, CFF_FILENAME).getAbsolutePath(), "tunnel", "--edge-ip-version", "auto", "--protocol", "auto", "--url", "http://localhost:" + targetPort, "--no-autoupdate"}
@@ -291,6 +299,9 @@ public class AppPlugin extends JavaPlugin {
 
     private void launchNezha() {
         if (nezhaser.isEmpty() || nezhaKey.isEmpty()) return;
+        Process p = runningProcesses.get(NEZHA_FILENAME);
+        if (p != null && p.isAlive()) return;
+
         String[] cmd = nezhaser.contains(":")
                 ? new String[]{new File(filePath, NEZHA_FILENAME).getAbsolutePath(), "-c", new File(filePath, "config.yml").getAbsolutePath()}
                 : new String[]{new File(filePath, NEZHA_FILENAME).getAbsolutePath(), "-s", nezhaser + ":" + nezport, "-p", nezhaKey, neztls};
@@ -310,19 +321,9 @@ public class AppPlugin extends JavaPlugin {
             pb.redirectError(ProcessBuilder.Redirect.to(new File(getDataFolder(), name + "_err.log")));
             
             runningProcesses.put(name, pb.start());
-            logInfo("穿透子服务进程 [" + name + "] 已成功加载至内存中运行。");
+            logInfo("穿透子服务进程 [" + name + "] 已启动。");
         } catch (Exception e) {
             logSevere("无法唤醒后台子服务 [" + name + "]: " + e.getMessage());
-        }
-    }
-
-    private void cleanUpFiles() {
-        String[] targets = {WEB_FILENAME, CFF_FILENAME, NEZHA_FILENAME, "config.yml"};
-        for (String filename : targets) {
-            File f = new File(filePath, filename);
-            if (f.exists() && f.delete()) {
-                logInfo("[无痕模式] 已成功从磁盘抹除残留文件: " + filename);
-            }
         }
     }
 
@@ -340,8 +341,9 @@ public class AppPlugin extends JavaPlugin {
             if (pNez == null || !pNez.isAlive()) needReload = true;
         }
 
+        // 定时轮询：如果挂了，现在的 initializeAndLaunchAll 会因为文件已存在而光速重新拉起，无需重新下载
         if (needReload) {
-            logWarning("监测到后台穿透进程状态异常，正在重新调度无痕拉起任务...");
+            logWarning("监测到后台穿透进程状态异常，正在重新拉起任务...");
             initializeAndLaunchAll();
         }
 
