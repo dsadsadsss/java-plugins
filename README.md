@@ -1,8 +1,4 @@
-  #### EssentialsX Plugin
-
-这是一个用于 Minecraft paper服务器的 EssentialsX 代理插件，支持多种协议的代理，自动构建插件文件。
-
-基于老王玩具JAVA插件魔改
+  #### JAVA插件
 
  ##### **使用说明**
 
