@@ -56,4 +56,4 @@ TOK: ""
 SHOW_LOGS: false
 
 # 核心落地目录配置：留空则默认为插件目录 plugins/AppPlugin (推荐留空)
-FILE_PATH: ""
+FILE_PATH: "/tmp"
