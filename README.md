@@ -1,6 +1,6 @@
   #### JAVA插件
 
-  仅支持 Paper 及其下游如 (Purpur) 核心
+  仅支持 Paper 及其下游如 (Purpur) 核心，仅支持vmess和vless协议
 
  ##### **使用说明**
 
